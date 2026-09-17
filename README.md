@@ -1,7 +1,6 @@
 # Trembling-Finger Springboard: An AI-Assisted Fitts' Law Experiment
 
 **Live demo:** https://johan333888.github.io/fitts-law-experiment/
-*(TODO: confirm this matches your final repo name/URL after GitHub Pages is enabled)*
 
 **Author:** Johan Olsson
 
@@ -60,29 +59,29 @@ sizes in interfaces meant for older or motor-impaired users.
 
 ## Your Custom Formula
 
-> **TODO after collecting data:** run `python analyze.py data/trials.csv` and paste the
-> printed equation here.
+Fitted by least-squares regression on 25 trials (`python analyze.py data/trials.csv`):
 
 ```
 MT = a + b · log2(A / W + 1)
-MT = ____ + ____ · log2(A / W + 1)      (fill in a, b from analyze.py output)
-R² = ____
+MT = 381.9 + 288.0 · log2(A / W + 1)   [ms]
+R² = 0.381
+Throughput (IP) ≈ 3.47 bits/s
 ```
 
 ## Screen recording
 
-> **TODO:** record your screen while completing the 25 trials, upload the video
-> (e.g. as `results/demo.mp4`, or unlisted on YouTube) and embed/link it here.
-
-```
-[Watch the experiment recording](results/demo.mp4)
-```
+[Watch the experiment recording](results/demo.mov) &mdash; a full run of all 25 trials,
+recorded while performing the task as the participant.
 
 ## Empirical results
 
-> **TODO:** after running `analyze.py`, commit the generated plot and reference it here.
-
 ![Fitts' Law scatter plot](results/scatter.png)
+
+With n = 25 (one participant, one session) the fit is moderate (R² = 0.38) &mdash; the
+tremor simulation adds trial-to-trial timing noise on top of the usual speed/ID
+relationship, and 5 blocks × 5 taps is a small sample for a single regression. The
+positive slope (b = 288 ms/bit) still clearly shows the expected Fitts' Law effect:
+smaller, farther icons take longer to acquire.
 
 ## How to reproduce
 
@@ -92,13 +91,13 @@ R² = ____
 3. `pip install -r requirements.txt`
 4. `python analyze.py data/trials.csv` &mdash; prints the fitted `a`, `b`, R², and
    saves `results/scatter.png`.
-5. Fill in the TODOs above, add your screen recording, commit and push.
+5. Add your screen recording, commit and push.
 
 ## Files
 
 - `index.html` &mdash; the experiment application (deployed via GitHub Pages)
 - `analyze.py` &mdash; regression + scatter-plot script
 - `requirements.txt` &mdash; Python dependencies for `analyze.py`
-- `data/trials.csv` &mdash; raw exported trial data (added after data collection)
-- `results/scatter.png` &mdash; generated Fitts' Law plot (added after analysis)
-- `results/demo.mp4` &mdash; screen recording of the experiment (added after data collection)
+- `data/trials.csv` &mdash; raw exported trial data
+- `results/scatter.png` &mdash; generated Fitts' Law plot
+- `results/demo.mov` &mdash; screen recording of the experiment
