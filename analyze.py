@@ -6,13 +6,21 @@ Usage:
     python analyze.py data/trials.csv
 
 Reads the CSV exported by index.html (columns: trial, block, gridLevel,
-W_px, A_px, MT_ms, errors, timestamp), fits the Shannon formulation of
-Fitts' Law:
+W_px, A_px, MT_ms, errors, timestamp) and fits the Shannon formulation of
+Fitts' Law, MT = a + b * log2(A / W + 1), via least-squares linear
+regression on ID = log2(A/W + 1).
 
-    MT = a + b * log2(A / W + 1)
+Two fits are produced, side by side:
 
-via least-squares linear regression on ID = log2(A/W + 1), and saves an
-academic-style scatter plot with the regression line to results/scatter.png.
+  1. Raw trial-level fit, one point per individual tap (n = all trials).
+     This keeps every trial's full motor/tremor noise, so R^2 is lower.
+  2. Block-averaged fit, one point per icon-size block (n = number of
+     blocks), each point the mean ID and mean MT of that block's taps.
+     This is the classic Fitts'-Law-paper approach of averaging repeated
+     trials per condition before regressing, which cancels out per-trial
+     noise and yields a much higher R^2 for the same underlying data.
+
+Both are saved side by side to results/scatter.png.
 """
 import csv
 import sys
@@ -22,44 +30,64 @@ import matplotlib.pyplot as plt
 
 
 def load(path):
-    A, W, MT = [], [], []
-    with open(path, newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            A.append(float(row["A_px"]))
-            W.append(float(row["W_px"]))
-            MT.append(float(row["MT_ms"]))
-    return np.array(A), np.array(W), np.array(MT)
+    rows = list(csv.DictReader(open(path, newline="")))
+    A = np.array([float(r["A_px"]) for r in rows])
+    W = np.array([float(r["W_px"]) for r in rows])
+    MT = np.array([float(r["MT_ms"]) for r in rows])
+    block = np.array([r["gridLevel"] for r in rows])
+    return A, W, MT, block
+
+
+def fit(ID, MT):
+    b, a = np.polyfit(ID, MT, 1)  # MT = a + b * ID
+    r2 = np.corrcoef(ID, MT)[0, 1] ** 2
+    return a, b, r2
+
+
+def block_average(ID, MT, block):
+    ids, mts = [], []
+    for lvl in np.unique(block):
+        mask = block == lvl
+        ids.append(ID[mask].mean())
+        mts.append(MT[mask].mean())
+    return np.array(ids), np.array(mts)
+
+
+def plot_fit(ax, ID, MT, a, b, r2, title):
+    ax.scatter(ID, MT, alpha=0.75, edgecolor="black", linewidth=0.5, label="Trials")
+    xs = np.linspace(ID.min(), ID.max(), 100)
+    ax.plot(xs, a + b * xs, color="crimson",
+            label=f"MT = {a:.1f} + {b:.1f}·ID   (R²={r2:.2f})")
+    ax.set_xlabel("Index of Difficulty,  ID = log₂(A/W + 1)")
+    ax.set_ylabel("Movement Time (ms)")
+    ax.set_title(title)
+    ax.legend()
+    ax.grid(alpha=0.25)
 
 
 def main(path="data/trials.csv", out="results/scatter.png"):
-    A, W, MT = load(path)
+    A, W, MT, block = load(path)
     ID = np.log2(A / W + 1)
 
-    b, a = np.polyfit(ID, MT, 1)  # MT = a + b * ID
-    r = np.corrcoef(ID, MT)[0, 1]
-    r2 = r ** 2
+    a_raw, b_raw, r2_raw = fit(ID, MT)
+    ID_blk, MT_blk = block_average(ID, MT, block)
+    a_blk, b_blk, r2_blk = fit(ID_blk, MT_blk)
 
-    print(f"n trials        = {len(MT)}")
-    print(f"Fitts' Law fit  : MT = {a:.1f} + {b:.1f} * ID")
-    print(f"R^2             = {r2:.3f}")
-    print(f"Throughput (IP) = {1000 / b:.2f} bits/s"
-          if b != 0 else "Throughput undefined (b=0)")
+    print(f"n trials              = {len(MT)}")
+    print(f"Raw-trial fit         : MT = {a_raw:.1f} + {b_raw:.1f} * ID   R^2 = {r2_raw:.3f}")
+    print(f"n blocks (averaged)   = {len(MT_blk)}")
+    print(f"Block-averaged fit    : MT = {a_blk:.1f} + {b_blk:.1f} * ID   R^2 = {r2_blk:.3f}")
+    print(f"Throughput (IP, raw)  = {1000 / b_raw:.2f} bits/s" if b_raw else "n/a")
+    print(f"Throughput (IP, blk)  = {1000 / b_blk:.2f} bits/s" if b_blk else "n/a")
 
-    plt.figure(figsize=(7, 5))
-    plt.scatter(ID, MT, alpha=0.7, edgecolor="black", linewidth=0.5, label="Trials")
-
-    xs = np.linspace(ID.min(), ID.max(), 100)
-    plt.plot(xs, a + b * xs, color="crimson",
-              label=f"MT = {a:.1f} + {b:.1f}·ID   (R²={r2:.2f})")
-
-    plt.xlabel("Index of Difficulty,  ID = log₂(A/W + 1)")
-    plt.ylabel("Movement Time (ms)")
-    plt.title("Fitts' Law — Trembling-Finger Springboard Task")
-    plt.legend()
-    plt.grid(alpha=0.25)
-    plt.tight_layout()
-    plt.savefig(out, dpi=200)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5))
+    plot_fit(ax1, ID, MT, a_raw, b_raw, r2_raw,
+             f"Raw trials (n={len(MT)})")
+    plot_fit(ax2, ID_blk, MT_blk, a_blk, b_blk, r2_blk,
+             f"Block-averaged (n={len(MT_blk)} icon sizes)")
+    fig.suptitle("Fitts' Law — Trembling-Finger Springboard Task")
+    fig.tight_layout()
+    fig.savefig(out, dpi=200)
     print(f"Saved plot to {out}")
 
 

@@ -59,13 +59,19 @@ sizes in interfaces meant for older or motor-impaired users.
 
 ## Your Custom Formula
 
-Fitted by least-squares regression on 25 trials (`python analyze.py data/trials.csv`):
+Fitted by least-squares regression (`python analyze.py data/trials.csv`), reported two
+ways &mdash; see [Empirical results](#empirical-results) below for why both are shown:
 
 ```
 MT = a + b · log2(A / W + 1)
-MT = 381.9 + 288.0 · log2(A / W + 1)   [ms]
-R² = 0.381
-Throughput (IP) ≈ 3.47 bits/s
+
+Raw trials (n=25, every individual tap):
+  MT = 381.9 + 288.0 · log2(A / W + 1)   [ms]
+  R² = 0.381,  Throughput ≈ 3.47 bits/s
+
+Block-averaged (n=5, one point per icon size):
+  MT = 64.4 + 427.4 · log2(A / W + 1)   [ms]
+  R² = 0.919,  Throughput ≈ 2.34 bits/s
 ```
 
 ## Screen recording
@@ -75,13 +81,23 @@ recorded while performing the task as the participant.
 
 ## Empirical results
 
-![Fitts' Law scatter plot](results/scatter.png)
+![Fitts' Law scatter plot: raw trials vs. block-averaged](results/scatter.png)
 
-With n = 25 (one participant, one session) the fit is moderate (R² = 0.38) &mdash; the
-tremor simulation adds trial-to-trial timing noise on top of the usual speed/ID
-relationship, and 5 blocks × 5 taps is a small sample for a single regression. The
-positive slope (b = 288 ms/bit) still clearly shows the expected Fitts' Law effect:
-smaller, farther icons take longer to acquire.
+The raw single-trial regression (left panel, n=25) only reaches **R² = 0.38**. Regressing
+directly on every individual tap keeps the full trial-to-trial noise from the simulated
+hand tremor &mdash; the pointer jitters by roughly the same physical amplitude regardless
+of icon size, so smaller targets get a proportionally larger, noisier "miss margin" per
+tap, and a single outlier (~2.1 s on one large-ID trial) pulls the small-n fit down hard.
+
+Classic Fitts' Law papers instead average several repeated trials per difficulty
+condition before regressing, which cancels out exactly that kind of per-trial motor
+noise. Doing the same here &mdash; averaging the 5 taps within each icon-size block down
+to one (ID, MT) point per block, n=5 &mdash; gives **R² = 0.919** (right panel), a
+near-textbook fit that matches the ~0.91 R² obtained the same way (averaging repeated
+trials per condition before regressing) in the Part I Fitts' Law assignment. This
+confirms the underlying law holds well for this task; the low raw-trial R² is a
+noise/sample-size artifact of the tremor simulation and single-session data collection,
+not evidence against Fitts' Law itself.
 
 ## How to reproduce
 
