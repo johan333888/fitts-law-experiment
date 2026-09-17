@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fitts' Law: Trembling-Finger Springboard</title>
+<style>
+  :root {
+    --bg: #0b0c10;
+    --panel: #16181d;
+    --text: #eef0f3;
+    --muted: #9aa0aa;
+    --accent: #34c759;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    overflow: hidden;
+  }
+  #app {
+    position: relative;
+    width: 100vw; height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+  }
+  canvas {
+    display: block;
+    cursor: none;
+    touch-action: none;
+  }
+  .overlay {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.72);
+    z-index: 10;
+    backdrop-filter: blur(3px);
+  }
+  .card {
+    background: var(--panel);
+    border-radius: 16px;
+    padding: 28px 30px;
+    max-width: 480px;
+    width: min(92vw, 480px);
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    text-align: left;
+  }
+  .card h1 { font-size: 20px; margin: 0 0 10px; }
+  .card p { color: var(--muted); font-size: 14px; line-height: 1.55; margin: 0 0 10px; }
+  .card ul { color: var(--muted); font-size: 14px; line-height: 1.6; margin: 0 0 14px; padding-left: 18px; }
+  .card b { color: var(--text); }
+  button.primary {
+    appearance: none; border: none; cursor: pointer;
+    background: var(--accent); color: #06210c;
+    font-weight: 700; font-size: 15px;
+    padding: 12px 20px; border-radius: 10px;
+    width: 100%;
+  }
+  button.secondary {
+    appearance: none; border: 1px solid #3a3d44; cursor: pointer;
+    background: transparent; color: var(--text);
+    font-weight: 600; font-size: 14px;
+    padding: 10px 16px; border-radius: 10px;
+    width: 100%; margin-top: 8px;
+  }
+  #hud {
+    position: absolute; top: 10px; left: 10px; right: 10px;
+    display: flex; justify-content: space-between;
+    font-size: 12px; color: var(--muted);
+    z-index: 5; pointer-events: none;
+    font-variant-numeric: tabular-nums;
+  }
+  #hud span { background: rgba(0,0,0,0.35); padding: 4px 8px; border-radius: 8px; }
+  table.results { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 10px; }
+  table.results th, table.results td { border-bottom: 1px solid #2a2d33; padding: 4px 6px; text-align: right; color: var(--muted); }
+  table.results th:first-child, table.results td:first-child { text-align: left; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="stage"></canvas>
+  <div id="hud">
+    <span id="hud-block">Level -/-</span>
+    <span id="hud-trial">Trial -/-</span>
+  </div>
+
+  <div class="overlay" id="intro">
+    <div class="card">
+      <h1>Trembling-Finger Springboard</h1>
+      <p><b>Scenario:</b> you are an older adult with a mild hand tremor, selecting an app on a
+        smartphone home screen. Your on-screen pointer trembles like a real fingertip &mdash;
+        it will not land exactly where you aim.</p>
+      <p><b>Task:</b> the moment a screen appears, one app turns <b style="color:#34c759">green</b>.
+        Tap it as fast and accurately as possible. All other apps stay grey.</p>
+      <ul>
+        <li>5 icon sizes are tested, 5 correct taps per size (25 trials total).</li>
+        <li>Icon size changes automatically between blocks &mdash; the grid always fills the screen.</li>
+        <li>A CSV of your Movement Times is generated automatically at the end.</li>
+      </ul>
+      <button class="primary" id="startBtn">Start experiment</button>
+    </div>
+  </div>
+
+  <div class="overlay" id="blockBreak" hidden>
+    <div class="card" style="text-align:center;">
+      <h1 id="blockBreakTitle">Level 2 / 5</h1>
+      <p>Icon size changed. Get ready&hellip;</p>
+    </div>
+  </div>
+
+  <div class="overlay" id="done" hidden>
+    <div class="card">
+      <h1>Done &mdash; thank you!</h1>
+      <p>25 trials recorded. Download your data below, then run <code>analyze.py</code> to
+        get your personal Fitts' Law equation and scatter plot.</p>
+      <div id="summary"></div>
+      <button class="primary" id="downloadBtn">Download CSV</button>
+      <button class="secondary" id="restartBtn">Run again</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  // ---------- Experiment configuration ----------
+  const LEVELS = [2, 3, 4, 5, 7];   // grid is LEVEL x LEVEL icons, filling the whole screen
+  const TRIALS_PER_BLOCK = 5;
+  const TREMOR_AMPLITUDE_PX = 7;    // combined peak amplitude of the simulated tremor
+
+  // ---------- Canvas / phone mockup geometry ----------
+  const canvas = document.getElementById("stage");
+  const ctx = canvas.getContext("2d");
+  let dpr = Math.max(1, window.devicePixelRatio || 1);
+
+  let phone = { x: 0, y: 0, w: 0, h: 0, screenX: 0, screenY: 0, screenW: 0, screenH: 0 };
+
+  function layoutPhone() {
+    const vw = window.innerWidth, vh = window.innerHeight;
+    canvas.width = vw * dpr;
+    canvas.height = vh * dpr;
+    canvas.style.width = vw + "px";
+    canvas.style.height = vh + "px";
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const aspect = 390 / 844; // iPhone-like portrait aspect
+    let h = vh * 0.94;
+    let w = h * aspect;
+    if (w > vw * 0.94) { w = vw * 0.94; h = w / aspect; }
+
+    phone.w = w; phone.h = h;
+    phone.x = (vw - w) / 2; phone.y = (vh - h) / 2;
+
+    const bezel = w * 0.035;
+    const statusH = h * 0.055;
+    const homeH = h * 0.035;
+
+    phone.screenX = phone.x + bezel;
+    phone.screenY = phone.y + bezel + statusH;
+    phone.screenW = w - bezel * 2;
+    phone.screenH = h - bezel * 2 - statusH - homeH;
+  }
+
+  window.addEventListener("resize", layoutPhone);
+  layoutPhone();
+
+  // ---------- Grid state ----------
+  let grid = { cols: 0, rows: 0, cellW: 0, cellH: 0, iconSize: 0, pad: 0 };
+  let cells = []; // {row, col, cx, cy, size, isTarget, flashUntil}
+
+  function buildGrid(level) {
+    grid.cols = level;
+    grid.rows = level;
+    grid.cellW = phone.screenW / grid.cols;
+    grid.cellH = phone.screenH / grid.rows;
+    grid.pad = Math.min(grid.cellW, grid.cellH) * 0.14;
+    grid.iconSize = Math.min(grid.cellW, grid.cellH) - grid.pad * 2;
+
+    cells = [];
+    for (let r = 0; r < grid.rows; r++) {
+      for (let c = 0; c < grid.cols; c++) {
+        const cx = phone.screenX + c * grid.cellW + grid.cellW / 2;
+        const cy = phone.screenY + r * grid.cellH + grid.cellH / 2;
+        cells.push({ row: r, col: c, cx, cy, size: grid.iconSize, isTarget: false, flashUntil: 0 });
+      }
+    }
+  }
+
+  function pickNewTarget(excludeIndex) {
+    let idx;
+    do { idx = Math.floor(Math.random() * cells.length); } while (cells.length > 1 && idx === excludeIndex);
+    cells.forEach(c => c.isTarget = false);
+    cells[idx].isTarget = true;
+    return idx;
+  }
+
+  // ---------- Tremor-driven pointer ----------
+  let rawX = 0, rawY = 0;
+  const t0 = performance.now();
+
+  function tremorOffset(now) {
+    const t = (now - t0) / 1000;
+    const x = Math.sin(t * 2 * Math.PI * 5.3 + 1.3) * 4 + Math.sin(t * 2 * Math.PI * 3.1 + 0.4) * 3;
+    const y = Math.cos(t * 2 * Math.PI * 4.7 + 2.1) * 4 + Math.sin(t * 2 * Math.PI * 6.2 + 0.9) * 3;
+    const scale = TREMOR_AMPLITUDE_PX / 7; // reference amplitude ~7px combined
+    return { x: x * scale, y: y * scale };
+  }
+
+  canvas.addEventListener("mousemove", (e) => {
+    const r = canvas.getBoundingClientRect();
+    rawX = e.clientX - r.left;
+    rawY = e.clientY - r.top;
+  });
+
+  // ---------- Trial state ----------
+  let state = "intro"; // intro | running | blockbreak | done
+  let blockOrder = [];
+  let blockIdx = 0, trialInBlock = 0, trialNum = 0;
+  let targetIdx = -1;
+  let trialStart = 0;
+  let startPoint = { x: 0, y: 0 };
+  let errorsThisTrial = 0;
+  let records = [];
+
+  function shuffle(arr) {
+    const a = arr.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  function startExperiment() {
+    blockOrder = shuffle(LEVELS);
+    blockIdx = 0; trialNum = 0; records = [];
+    document.getElementById("intro").hidden = true;
+    document.getElementById("done").hidden = true;
+    startBlock();
+  }
+
+  function startBlock() {
+    const level = blockOrder[blockIdx];
+    buildGrid(level);
+    trialInBlock = 0;
+    startPoint = { x: phone.screenX + phone.screenW / 2, y: phone.screenY + phone.screenH / 2 };
+    state = "blockbreak";
+    document.getElementById("blockBreakTitle").textContent = `Level ${blockIdx + 1} / ${blockOrder.length}  (${level}×${level} icons)`;
+    document.getElementById("blockBreak").hidden = false;
+    setTimeout(() => {
+      document.getElementById("blockBreak").hidden = true;
+      state = "running";
+      nextTrial();
+    }, 1100);
+  }
+
+  function nextTrial() {
+    errorsThisTrial = 0;
+    targetIdx = pickNewTarget(targetIdx);
+    trialStart = performance.now();
+    updateHud();
+  }
+
+  function updateHud() {
+    document.getElementById("hud-block").textContent = `Level ${blockIdx + 1}/${blockOrder.length}`;
+    document.getElementById("hud-trial").textContent = `Trial ${trialInBlock + 1}/${TRIALS_PER_BLOCK} (total ${trialNum + 1}/${blockOrder.length * TRIALS_PER_BLOCK})`;
+  }
+
+  function effectivePointer(now) {
+    const off = tremorOffset(now);
+    return { x: rawX + off.x, y: rawY + off.y };
+  }
+
+  function hitTest(px, py) {
+    for (let i = 0; i < cells.length; i++) {
+      const c = cells[i];
+      const half = c.size / 2;
+      if (px >= c.cx - half && px <= c.cx + half && py >= c.cy - half && py <= c.cy + half) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  canvas.addEventListener("click", (e) => {
+    if (state !== "running") return;
+    const now = performance.now();
+    const p = effectivePointer(now);
+    const hit = hitTest(p.x, p.y);
+
+    if (hit === -1) return; // tap missed every icon, ignore
+
+    if (hit === targetIdx) {
+      const mt = now - trialStart;
+      const target = cells[targetIdx];
+      const A = Math.hypot(target.cx - startPoint.x, target.cy - startPoint.y);
+      const W = target.size;
+      records.push({
+        trial: trialNum + 1,
+        block: blockIdx + 1,
+        gridLevel: blockOrder[blockIdx],
+        W_px: Math.round(W * 10) / 10,
+        A_px: Math.round(A * 10) / 10,
+        MT_ms: Math.round(mt * 10) / 10,
+        errors: errorsThisTrial,
+        timestamp: new Date().toISOString()
+      });
+
+      startPoint = { x: target.cx, y: target.cy };
+      trialNum++; trialInBlock++;
+
+      if (trialInBlock >= TRIALS_PER_BLOCK) {
+        blockIdx++;
+        if (blockIdx >= blockOrder.length) { finishExperiment(); return; }
+        startBlock();
+      } else {
+        nextTrial();
+      }
+    } else {
+      errorsThisTrial++;
+      cells[hit].flashUntil = now + 180;
+    }
+  });
+
+  function finishExperiment() {
+    state = "done";
+    const avgByLevel = {};
+    records.forEach(r => {
+      avgByLevel[r.gridLevel] = avgByLevel[r.gridLevel] || [];
+      avgByLevel[r.gridLevel].push(r.MT_ms);
+    });
+    let rows = "<table class='results'><tr><th>Grid</th><th>W (px)</th><th>Mean MT (ms)</th></tr>";
+    Object.keys(avgByLevel).sort((a, b) => b - a).forEach(level => {
+      const arr = avgByLevel[level];
+      const mean = arr.reduce((s, v) => s + v, 0) / arr.length;
+      const w = records.find(r => r.gridLevel == level).W_px;
+      rows += `<tr><td>${level}×${level}</td><td>${w.toFixed(0)}</td><td>${mean.toFixed(0)}</td></tr>`;
+    });
+    rows += "</table>";
+    document.getElementById("summary").innerHTML = rows;
+    document.getElementById("done").hidden = false;
+  }
+
+  function downloadCsv() {
+    const header = ["trial", "block", "gridLevel", "W_px", "A_px", "MT_ms", "errors", "timestamp"];
+    const lines = [header.join(",")];
+    records.forEach(r => lines.push(header.map(h => r[h]).join(",")));
+    const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "trials.csv";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  document.getElementById("startBtn").addEventListener("click", startExperiment);
+  document.getElementById("downloadBtn").addEventListener("click", downloadCsv);
+  document.getElementById("restartBtn").addEventListener("click", () => {
+    document.getElementById("done").hidden = true;
+    document.getElementById("intro").hidden = false;
+    state = "intro";
+  });
+
+  // ---------- Render loop ----------
+  function drawPhoneChrome() {
+    // body
+    ctx.fillStyle = "#000";
+    roundRect(phone.x, phone.y, phone.w, phone.h, phone.w * 0.12);
+    ctx.fill();
+    // screen background
+    ctx.fillStyle = "#1c1c1e";
+    roundRect(phone.screenX, phone.screenY - phone.h * 0.02, phone.screenW, phone.screenH + phone.h * 0.02, phone.w * 0.08);
+    ctx.fill();
+    // status bar text
+    ctx.fillStyle = "#c9c9cc";
+    ctx.font = `${Math.max(10, phone.w * 0.032)}px -apple-system, sans-serif`;
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "left";
+    const now = new Date();
+    const hh = String(now.getHours()).padStart(2, "0");
+    const mm = String(now.getMinutes()).padStart(2, "0");
+    ctx.fillText(`${hh}:${mm}`, phone.screenX + 6, phone.y + phone.h * 0.03);
+    ctx.textAlign = "right";
+    ctx.fillText("100%", phone.screenX + phone.screenW - 6, phone.y + phone.h * 0.03);
+    // home indicator
+    ctx.fillStyle = "#5a5a5e";
+    const barW = phone.w * 0.28, barH = Math.max(3, phone.w * 0.012);
+    roundRect(phone.x + phone.w / 2 - barW / 2, phone.y + phone.h - phone.w * 0.025, barW, barH, barH / 2);
+    ctx.fill();
+  }
+
+  function roundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function drawGrid(now) {
+    cells.forEach(c => {
+      const half = c.size / 2;
+      const flashing = now < c.flashUntil;
+      ctx.fillStyle = c.isTarget ? "#34c759" : (flashing ? "#e5484d" : "#8e8e93");
+      roundRect(c.cx - half, c.cy - half, c.size, c.size, c.size * 0.22);
+      ctx.fill();
+    });
+  }
+
+  function drawPointer(now) {
+    const p = effectivePointer(now);
+    ctx.beginPath();
+    ctx.fillStyle = "rgba(255,255,255,0.28)";
+    ctx.arc(p.x, p.y, 16, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.fillStyle = "rgba(255,255,255,0.9)";
+    ctx.arc(p.x, p.y, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function frame() {
+    const now = performance.now();
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawPhoneChrome();
+    if (state === "running" || state === "blockbreak") drawGrid(now);
+    if (state === "running") drawPointer(now);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
