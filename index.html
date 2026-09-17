@@ -277,18 +277,24 @@
   let cells = []; // {row, col, cx, cy, size, isTarget, flashUntil}
 
   function buildGrid(level) {
+    // Square cells so horizontal and vertical spacing between icons match
+    // exactly: size the cell from the screen width (cols = level), then
+    // fit as many whole rows as possible and center any leftover margin.
     grid.cols = level;
-    grid.rows = level;
-    grid.cellW = phone.screenW / grid.cols;
-    grid.cellH = phone.screenH / grid.rows;
-    grid.pad = Math.min(grid.cellW, grid.cellH) * 0.14;
-    grid.iconSize = Math.min(grid.cellW, grid.cellH) - grid.pad * 2;
+    const cellSize = phone.screenW / grid.cols;
+    grid.rows = Math.max(1, Math.floor(phone.screenH / cellSize));
+    grid.cellW = cellSize;
+    grid.cellH = cellSize;
+    grid.pad = cellSize * 0.14;
+    grid.iconSize = cellSize - grid.pad * 2;
+
+    const offsetY = phone.screenY + (phone.screenH - grid.rows * cellSize) / 2;
 
     cells = [];
     for (let r = 0; r < grid.rows; r++) {
       for (let c = 0; c < grid.cols; c++) {
-        const cx = phone.screenX + c * grid.cellW + grid.cellW / 2;
-        const cy = phone.screenY + r * grid.cellH + grid.cellH / 2;
+        const cx = phone.screenX + c * cellSize + cellSize / 2;
+        const cy = offsetY + r * cellSize + cellSize / 2;
         cells.push({ row: r, col: c, cx, cy, size: grid.iconSize, isTarget: false, flashUntil: 0 });
       }
     }
