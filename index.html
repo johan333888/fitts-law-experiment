@@ -25,10 +25,36 @@
     width: 100vw; height: 100vh;
     display: flex; align-items: center; justify-content: center;
   }
+  #backdrop {
+    position: fixed; inset: 0; z-index: -2;
+    background:
+      radial-gradient(ellipse 60% 45% at 18% 12%, rgba(255,214,150,0.22), transparent 60%),
+      radial-gradient(ellipse 55% 50% at 85% 20%, rgba(140,180,255,0.16), transparent 60%),
+      radial-gradient(ellipse 70% 60% at 50% 100%, rgba(60,50,70,0.55), transparent 70%),
+      linear-gradient(180deg, #1a1712 0%, #100e0c 55%, #0a0908 100%);
+    filter: saturate(1.05);
+  }
+  #backdrop::after {
+    content: "";
+    position: absolute; inset: 0;
+    background-image:
+      radial-gradient(circle, rgba(255,255,255,0.05) 1px, transparent 1.4px);
+    background-size: 3px 3px;
+    opacity: 0.5;
+    mix-blend-mode: overlay;
+  }
+  #hand {
+    position: fixed; inset: 0; z-index: -1;
+    width: 100vw; height: 100vh;
+    pointer-events: none;
+  }
   canvas {
     display: block;
     cursor: none;
     touch-action: none;
+    position: relative;
+    z-index: 1;
+    filter: drop-shadow(0 25px 45px rgba(0,0,0,0.55)) drop-shadow(0 4px 10px rgba(0,0,0,0.35));
   }
   .overlay {
     position: absolute; inset: 0;
@@ -79,7 +105,25 @@
 </style>
 </head>
 <body>
+<div id="backdrop"></div>
 <div id="app">
+  <svg id="hand" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <linearGradient id="skinGrad" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="#f2c49a"/>
+        <stop offset="55%" stop-color="#dba377"/>
+        <stop offset="100%" stop-color="#b9825a"/>
+      </linearGradient>
+      <linearGradient id="skinGradDark" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="#e2b085"/>
+        <stop offset="100%" stop-color="#a97650"/>
+      </linearGradient>
+      <filter id="handShadow" x="-30%" y="-30%" width="160%" height="160%">
+        <feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#000" flood-opacity="0.45"/>
+      </filter>
+    </defs>
+    <g id="handGroup" filter="url(#handShadow)"></g>
+  </svg>
   <canvas id="stage"></canvas>
   <div id="hud">
     <span id="hud-block">Level -/-</span>
@@ -164,8 +208,69 @@
     phone.screenH = h - bezel * 2 - statusH - homeH;
   }
 
-  window.addEventListener("resize", layoutPhone);
+  // ---------- Hand-holding-phone illustration (SVG) ----------
+  const handSvg = document.getElementById("hand");
+  const handGroup = document.getElementById("handGroup");
+
+  function drawHand() {
+    const vw = window.innerWidth, vh = window.innerHeight;
+    handSvg.setAttribute("viewBox", `0 0 ${vw} ${vh}`);
+    handGroup.innerHTML = "";
+
+    const ns = "http://www.w3.org/2000/svg";
+    const el = (tag, attrs) => {
+      const e = document.createElementNS(ns, tag);
+      for (const k in attrs) e.setAttribute(k, attrs[k]);
+      handGroup.appendChild(e);
+      return e;
+    };
+
+    const { x, y, w, h } = phone;
+
+    // Palm / lower wrist mound sitting below the phone.
+    el("ellipse", {
+      cx: x + w * 0.5, cy: y + h * 1.06,
+      rx: w * 1.05, ry: h * 0.26,
+      fill: "url(#skinGrad)"
+    });
+
+    // Four fingers wrapping around the left edge from behind.
+    const fingerCount = 4;
+    const spanTop = h * 0.30, spanBottom = h * 0.86;
+    for (let i = 0; i < fingerCount; i++) {
+      const t = i / (fingerCount - 1);
+      const cy = y + spanTop + (spanBottom - spanTop) * t;
+      const fw = w * 0.30, fh = h * 0.075 * (1 - Math.abs(t - 0.5) * 0.25);
+      el("rect", {
+        x: x - fw * 0.62, y: cy - fh / 2,
+        width: fw, height: fh,
+        rx: fh / 2,
+        fill: i % 2 === 0 ? "url(#skinGrad)" : "url(#skinGradDark)"
+      });
+      // fingernail hint
+      el("ellipse", {
+        cx: x - fw * 0.62 + fh * 0.55, cy: cy,
+        rx: fh * 0.32, ry: fh * 0.36,
+        fill: "rgba(255,255,255,0.18)"
+      });
+    }
+
+    // Thumb resting near the bottom-right edge, angled inward.
+    const thumbCx = x + w * 0.82, thumbCy = y + h * 0.9;
+    const thumbG = el("g", { transform: `rotate(-32 ${thumbCx} ${thumbCy})` });
+    const thumbEl = document.createElementNS(ns, "rect");
+    thumbEl.setAttribute("x", thumbCx - w * 0.11);
+    thumbEl.setAttribute("y", thumbCy - h * 0.10);
+    thumbEl.setAttribute("width", w * 0.30);
+    thumbEl.setAttribute("height", h * 0.095);
+    thumbEl.setAttribute("rx", h * 0.0475);
+    thumbEl.setAttribute("fill", "url(#skinGrad)");
+    thumbG.appendChild(thumbEl);
+  }
+
+  window.addEventListener("resize", () => { layoutPhone(); drawHand(); });
   layoutPhone();
+  drawHand();
 
   // ---------- Grid state ----------
   let grid = { cols: 0, rows: 0, cellW: 0, cellH: 0, iconSize: 0, pad: 0 };
@@ -417,13 +522,52 @@
 
   function drawPointer(now) {
     const p = effectivePointer(now);
+    const r = Math.max(11, phone.w * 0.052); // fingertip pad radius
+
+    // Soft contact shadow, offset toward the (fixed) light source.
+    ctx.save();
+    ctx.filter = "blur(5px)";
     ctx.beginPath();
-    ctx.fillStyle = "rgba(255,255,255,0.28)";
-    ctx.arc(p.x, p.y, 16, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(0,0,0,0.35)";
+    ctx.ellipse(p.x + r * 0.18, p.y + r * 0.28, r * 0.92, r * 0.8, 0, 0, Math.PI * 2);
     ctx.fill();
+    ctx.restore();
+
+    // Fingertip pad: skin-tone radial gradient, semi-transparent so the
+    // target underneath stays legible (like a real finger occluding a
+    // touchscreen icon).
+    const grad = ctx.createRadialGradient(p.x - r * 0.25, p.y - r * 0.3, r * 0.15, p.x, p.y, r);
+    grad.addColorStop(0, "rgba(247, 210, 178, 0.92)");
+    grad.addColorStop(0.6, "rgba(224, 172, 132, 0.85)");
+    grad.addColorStop(1, "rgba(178, 124, 88, 0.7)");
     ctx.beginPath();
-    ctx.fillStyle = "rgba(255,255,255,0.9)";
-    ctx.arc(p.x, p.y, 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Faint fingerprint ridge lines for texture.
+    ctx.save();
+    ctx.globalAlpha = 0.25;
+    ctx.strokeStyle = "#7a4f34";
+    ctx.lineWidth = Math.max(0.6, r * 0.045);
+    for (let i = 1; i <= 3; i++) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y + r * 0.12, r * (0.25 + i * 0.18), 0.15 * Math.PI, 0.85 * Math.PI);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // Specular highlight, upper-left.
+    ctx.beginPath();
+    ctx.fillStyle = "rgba(255,255,255,0.35)";
+    ctx.ellipse(p.x - r * 0.32, p.y - r * 0.35, r * 0.28, r * 0.18, -0.6, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Precise contact point marker (helps hit-test intuition without
+    // fully hiding the icon color).
+    ctx.beginPath();
+    ctx.fillStyle = "rgba(255,255,255,0.55)";
+    ctx.arc(p.x, p.y, Math.max(1.5, r * 0.08), 0, Math.PI * 2);
     ctx.fill();
   }
 
